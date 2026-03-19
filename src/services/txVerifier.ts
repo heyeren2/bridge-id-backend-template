@@ -4,18 +4,16 @@ import { CHAINS } from "../chains/config";
 export interface VerificationResult {
     valid: boolean;
     reason?: string;
-    nonce?: string;
-    messageHash?: string;
 }
 
 // ----------------------------------------------------------------
 // Verifies a burn tx is real before storing it
-// Prevents fake tx hashes from polluting your database
+// Checks: tx exists, succeeded, sender matches wallet
+// No contract address checks — bridge ID handles filtering
 // ----------------------------------------------------------------
 export async function verifyBurnTx(params: {
     txHash: string;
     wallet: string;
-    amount: string;
     chain: string;
 }): Promise<VerificationResult> {
 
@@ -57,30 +55,7 @@ export async function verifyBurnTx(params: {
             return { valid: false, reason: "Wallet mismatch" };
         }
 
-        // Step 3 — find DepositForBurn event in logs
-        // This confirms it is a real CCTP burn
-        const burnLog = receipt.logs.find(log =>
-            log.address.toLowerCase() === chainConfig.tokenMessenger.toLowerCase()
-        );
-
-        if (!burnLog) {
-            return {
-                valid: false,
-                reason: "No DepositForBurn event found — not a valid CCTP burn",
-            };
-        }
-
-        // Step 4 — extract nonce from log topics
-        // Nonce is what links this burn to the mint on destination chain
-        const nonce = burnLog.topics[1]
-            ? BigInt(burnLog.topics[1]).toString()
-            : undefined;
-
-        return {
-            valid: true,
-            nonce,
-            messageHash: txHash,
-        };
+        return { valid: true };
 
     } catch (err: any) {
         console.error("Verification error:", err.message);

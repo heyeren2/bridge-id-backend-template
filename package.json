@@ -12,7 +12,7 @@
     },
     "license": "MIT",
     "dependencies": {
-        "bridge-id-sdk": "^0.2.0",
+        "bridge-id-sdk": "^0.4.1",
         "cors": "^2.8.6",
         "dotenv": "^16.6.1",
         "drizzle-orm": "^0.29.5",

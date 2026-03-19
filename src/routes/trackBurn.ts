@@ -23,11 +23,9 @@ trackBurnRoute.post("/burn", async (req: Request, res: Response) => {
     }
 
     // ── Verify tx is real on-chain ────────────────────────────────
-    // This is critical — prevents fake data from entering your database
     const verification = await verifyBurnTx({
         txHash: burnTxHash,
         wallet,
-        amount,
         chain: sourceChain,
     });
 
@@ -48,8 +46,6 @@ trackBurnRoute.post("/burn", async (req: Request, res: Response) => {
                 destinationChain: destinationChain.toLowerCase(),
                 burnTxHash,
                 mintTxHash: null,
-                nonce: verification.nonce,
-                messageHash: verification.messageHash,
                 status: "burned",
             })
             .onConflictDoNothing();
@@ -73,7 +69,7 @@ trackBurnRoute.post("/burn", async (req: Request, res: Response) => {
                 .where(eq(users.wallet, wallet.toLowerCase()));
         }
 
-        return res.json({ success: true, nonce: verification.nonce });
+        return res.json({ success: true });
 
     } catch (err: any) {
         console.error("Failed to store burn tx:", err.message);

@@ -1,37 +1,45 @@
 # bridge-id-backend-template
 
-A ready-to-deploy analytics backend for Circle CCTP bridge integrators using
-[bridge-id-sdk](https://www.npmjs.com/package/bridge-id-sdk).
+Analytics and tracking backend for [bridge-id-sdk](https://www.npmjs.com/package/bridge-id-sdk).
 
-Tracks burn→mint lifecycle, stores transaction history, and exposes analytics
-endpoints for your bridge frontend — powered by Express, Neon (PostgreSQL),
-and Goldsky webhooks.
+Tracks the full burn→attestation→mint lifecycle for any CCTP bridge using the SDK.
+Includes a 2-minute backup poller that checks Circle's Iris API for missed updates.
+
+---
+
+## Source Code
+
+- **SDK Repository**: [github.com/heyeren2/bridge-id-sdk](https://github.com/heyeren2/bridge-id-sdk)
 
 ---
 
 ## What This Backend Does
 
 ```
-On-chain (Goldsky)                    Off-chain (This Backend)
-──────────────────                    ────────────────────────
-BridgeRouter emits                    POST /track/burn
-BridgeInitiated event         ──►     saves burn metadata
+Your Bridge Frontend              This Backend
+──────────────────              ────────────────
+User burns USDC
         │
-        ▼
-Goldsky subgraph indexes it
+        ├─ sdk.trackBurn()  ──►  POST /track/burn
+        │                        stores burn (status: "burned")
         │
-        ▼
-Goldsky webhook fires         ──►     POST /hooks/goldsky
-                                      updates transaction record
-                                              │
-                                              ▼
-                                      GET /activity/:wallet
-                                      GET /transactions
-                                      GET /analytics/stats
-                                              ▲
-                                              │
-                                      Bridge frontend queries these
+        ├─ sdk.trackAttestation() ──►  POST /track/attestation
+        │                              updates to "attested" or "attestation_failed"
+        │
+        └─ sdk.trackMint()  ──►  POST /track/mint
+                                 updates to "completed" or "mint_failed"
+                                         │
+                                         ▼
+                                 GET /activity/:wallet
+                                 GET /transactions
+                                 GET /analytics/stats
+                                         ▲
+                                         │
+                                 Your frontend queries these
 ```
+
+**Backup:** A poller checks Circle's Iris API every 2 minutes for any stuck
+`"burned"` or `"attested"` transactions and auto-updates them if the mint is detected.
 
 ---
 
@@ -42,7 +50,7 @@ Goldsky webhook fires         ──►     POST /hooks/goldsky
 | Server      | Express + TypeScript         |
 | Database    | Neon (serverless PostgreSQL) |
 | ORM         | Drizzle ORM                  |
-| Indexer     | Goldsky subgraphs + webhooks |
+| Backup      | Circle Iris API poller       |
 | Deployment  | Render                       |
 
 ---
@@ -50,10 +58,9 @@ Goldsky webhook fires         ──►     POST /hooks/goldsky
 ## Prerequisites
 
 Before starting, make sure you have accounts on:
-- [Neon](https://neon.tech) — free tier is enough
-- [Render](https://render.com) — free tier is enough
-- [Goldsky](https://goldsky.com) — free tier is enough
-- [GitHub](https://github.com) — to connect with Render
+- [Neon](https://neon.tech) - free tier is enough
+- [Render](https://render.com) - free tier is enough
+- [GitHub](https://github.com) - to connect with Render
 
 ---
 
@@ -70,8 +77,7 @@ Copy the example env file:
 cp .env.example .env
 ```
 
-Your `.env` file needs these values — instructions for each are in the
-sections below:
+Your `.env` file needs these values:
 
 ```env
 PORT=3001
@@ -80,10 +86,6 @@ DATABASE_URL=
 SEPOLIA_RPC_URL=
 BASE_RPC_URL=
 ARC_RPC_URL=
-
-GOLDSKY_SECRET_SEPOLIA=
-GOLDSKY_SECRET_BASE=
-GOLDSKY_SECRET_ARC=
 ```
 
 ---
@@ -167,22 +169,19 @@ from your `.env` file. Do NOT commit your `.env` to GitHub.
 DATABASE_URL           → your Neon connection string
 SEPOLIA_RPC_URL        → your Alchemy/Infura Sepolia RPC
 BASE_RPC_URL           → your Alchemy/Infura Base Sepolia RPC
-ARC_RPC_URL            → https://rpc.ankr.com/arc_testnet
-GOLDSKY_SECRET_SEPOLIA → (generated in Part 4)
-GOLDSKY_SECRET_BASE    → (generated in Part 4)
-GOLDSKY_SECRET_ARC     → (generated in Part 4)
+ARC_RPC_URL            → https://rpc.testnet.arc.network
 ```
 
 ### 3.4 Deploy
 
 Click **Deploy**. Once done your backend will be live at:
 ```
-https://bridge-id-backend.onrender.com
+https://YOURBACKENDNAME.onrender.com
 ```
 
 Verify it's running:
 ```bash
-curl https://bridge-id-backend.onrender.com/health
+curl https://YOURBACKENDNAME.onrender.com/health
 # → { "status": "ok" }
 ```
 
@@ -192,161 +191,80 @@ curl https://bridge-id-backend.onrender.com/health
 
 ---
 
-## Part 4 — Set Up Goldsky Subgraphs and Webhooks
+## Part 4 — Integrate the SDK Into Your Bridge Frontend
 
-Goldsky indexes your BridgeRouter events on-chain and fires them to your
-backend via webhooks — so you never miss a burn event.
-
-### 4.1 Install Goldsky CLI
-
-```bash
-curl https://goldsky.com/install | bash
-goldsky login
-```
-
-### 4.2 Deploy subgraphs for each chain
-
-You need one subgraph per chain. From your `bridge-goldsky` folder:
-
-```bash
-goldsky subgraph deploy bridge-router-sepolia/1.0.0 --path .
-goldsky subgraph deploy bridge-router-base/1.0.0 --path .
-goldsky subgraph deploy bridge-router-arc/1.0.0 --path .
-```
-
-Your `subgraph.yaml` must point to the correct BridgeRouter address
-for each chain:
-
-| Chain        | Router Address                               |
-|--------------|----------------------------------------------|
-| Sepolia      | `0xf7552791170732E634F4fB5CD38958eA0B57e193` |
-| Base Sepolia | `0x9E4bC829967Ef095053f0E8b339690E49ab3aEB4` |
-| Arc          | `0x6FC36fD3396310D755A27FD67a0f90A4b7b58A40` |
-
-### 4.3 Create webhooks for each chain
-
-```bash
-goldsky subgraph webhook create bridge-router-sepolia/1.0.0 \
-  --name bridge-sepolia-webhook \
-  --url https://YOUR_BACKEND_URL/hooks/goldsky \
-  --entity bridge_event
-
-goldsky subgraph webhook create bridge-router-base/1.0.0 \
-  --name bridge-base-webhook \
-  --url https://YOUR_BACKEND_URL/hooks/goldsky \
-  --entity bridge_event
-
-goldsky subgraph webhook create bridge-router-arc/1.0.0 \
-  --name bridge-arc-webhook \
-  --url https://YOUR_BACKEND_URL/hooks/goldsky \
-  --entity bridge_event
-```
-
-### 4.4 Get webhook secrets
-
-After creating each webhook, Goldsky provides a secret for each one.
-Add them to your Render environment variables:
-
-```
-GOLDSKY_SECRET_SEPOLIA=whs_xxxx
-GOLDSKY_SECRET_BASE=whs_xxxx
-GOLDSKY_SECRET_ARC=whs_xxxx
-```
-
-Your backend verifies the `goldsky-webhook-secret` header on every
-incoming request using these secrets.
-
-### 4.5 Verify webhooks are working
-
-Trigger a test bridge transaction on Sepolia and check your Render logs.
-You should see:
-
-```
-[goldsky] received bridge_event for bridgeId: mybridge_a3f9c2
-[goldsky] transaction saved: 0x...
-```
-
----
-
-## Part 5 — Integrate the SDK Into Your Bridge Frontend
-
-### 5.1 Install the SDK
+### 4.1 Install the SDK
 
 ```bash
 npm install bridge-id-sdk
 ```
 
-### 5.2 Generate your Bridge ID
+### 4.2 Generate your Bridge ID
 
 Run this once. This ID permanently links all your transactions in the backend.
 
 ```bash
-npx bridgeidsdk --name "MyBridge" --address "0xYOUR_ROUTER_ADDRESS"
+node scripts/generate-bridge-id.js --name "MyBridge" --address "0xYOUR_FEE_RECIPIENT_ADDRESS"
 ```
 
 Add the output to your frontend `.env`:
 ```env
-NEXT_PUBLIC_BRIDGE_ID=mybridge_a3f9c2
-NEXT_PUBLIC_ANALYTICS_URL=https://your-backend.onrender.com
-NEXT_PUBLIC_SEPOLIA_RPC=https://eth-sepolia.g.alchemy.com/v2/YOUR_KEY
-NEXT_PUBLIC_BASE_RPC=https://base-sepolia.g.alchemy.com/v2/YOUR_KEY
-NEXT_PUBLIC_ARC_RPC=https://rpc.ankr.com/arc_testnet
+VITE_BRIDGE_ID=mybridge_a3f9c2
+VITE_ANALYTICS_URL=https://your-backend.onrender.com
+VITE_SEPOLIA_RPC=https://eth-sepolia.g.alchemy.com/v2/YOUR_KEY
+VITE_BASE_RPC=https://base-sepolia.g.alchemy.com/v2/YOUR_KEY
+VITE_ARC_RPC=https://rpc.testnet.arc.network
 ```
 
-### 5.3 Initialize the SDK
+### 4.3 Initialize the SDK
 
 ```typescript
-import { BridgeAnalytics, BridgeError } from "bridge-id-sdk"
+import { BridgeAnalytics } from "bridge-id-sdk"
 
 const sdk = new BridgeAnalytics({
-  bridgeId: process.env.NEXT_PUBLIC_BRIDGE_ID,
-  apiUrl:   process.env.NEXT_PUBLIC_ANALYTICS_URL,
+  bridgeId: import.meta.env.VITE_BRIDGE_ID,
+  apiUrl:   import.meta.env.VITE_ANALYTICS_URL,
   rpcUrls: {
-    sepolia: process.env.NEXT_PUBLIC_SEPOLIA_RPC,
-    base:    process.env.NEXT_PUBLIC_BASE_RPC,
-    arc:     process.env.NEXT_PUBLIC_ARC_RPC,
+    sepolia: import.meta.env.VITE_SEPOLIA_RPC,
+    base:    import.meta.env.VITE_BASE_RPC,
+    arc:     import.meta.env.VITE_ARC_RPC,
   }
 })
 ```
 
-### 5.4 Bridge with full tracking
+### 4.4 Track bridge lifecycle
 
-Only call `sdk.bridge()` when both chains have your router deployed.
-For all other routes, call CCTP contracts directly without tracking.
+Call these in your frontend's bridge status callbacks:
 
 ```typescript
-const ROUTER_CHAINS = ["sepolia", "base", "arc"]
+// After burn tx confirms on source chain
+await sdk.trackBurn({
+  burnTxHash: "0x...",
+  wallet: userAddress,
+  amount: "100.00",
+  sourceChain: "sepolia",
+  destinationChain: "base",
+})
 
-const bothSupported =
-  ROUTER_CHAINS.includes(sourceChain) &&
-  ROUTER_CHAINS.includes(destinationChain)
+// When attestation completes (or fails)
+await sdk.trackAttestation({
+  burnTxHash: "0x...",
+  success: true, // or false if attestation failed
+})
 
-if (bothSupported) {
-  try {
-    const txHash = await sdk.bridge({
-      amount,
-      sourceChain,
-      destinationChain,
-      recipientAddress: userAddress,
-      walletClient,
-    })
-    console.log("Bridge tx:", txHash)
-  } catch (err) {
-    if (err instanceof BridgeError) {
-      console.error(err.code, err.message)
-    }
-  }
-} else {
-  // Call CCTP contracts directly — no tracking
-  await callCCTPDirectly({ ... })
-}
+// When mint completes on destination chain
+await sdk.trackMint({
+  burnTxHash: "0x...",
+  mintTxHash: "0x...",
+  success: true,
+})
 ```
 
-### 5.5 Show transaction status
+### 4.5 Show transaction status
 
 ```typescript
 const status = await sdk.getStatus(burnTxHash)
-// "burned" | "attested" | "minted" | "not_found"
+// "burned" | "attested" | "attestation_failed" | "mint_failed" | "completed" | "not_found"
 
 if (status.status === "attested") {
   // Show Remint button in your UI
@@ -355,7 +273,7 @@ if (status.status === "attested") {
 }
 ```
 
-### 5.6 Render the activity tab
+### 4.6 Render the activity tab
 
 ```typescript
 const activity = await sdk.getUserActivity(walletAddress)
@@ -363,7 +281,7 @@ const activity = await sdk.getUserActivity(walletAddress)
 activity.transactions.forEach(tx => {
   console.log(tx.sourceChain, "→", tx.destinationChain)
   console.log(tx.amount, "USDC")
-  console.log(tx.status) // "burned" | "attested" | "minted" | "failed"
+  console.log(tx.status)
 })
 ```
 
@@ -377,7 +295,7 @@ Base URL: `https://your-backend.onrender.com`
 
 ### `POST /track/burn`
 
-Records a burn transaction. Called automatically by `sdk.bridge()`.
+Records a burn transaction. Called by `sdk.trackBurn()`.
 
 **Request body:**
 ```json
@@ -387,12 +305,46 @@ Records a burn transaction. Called automatically by `sdk.bridge()`.
   "amount": "100.00",
   "sourceChain": "sepolia",
   "destinationChain": "base",
-  "bridgeId": "mybridge_a3f9c2",
-  "timestamp": 1234567890
+  "bridgeId": "mybridge_a3f9c2"
 }
 ```
 
-**Response:** `200 OK`
+**Response:** `{ "success": true }`
+
+---
+
+### `POST /track/attestation`
+
+Updates attestation status. Called by `sdk.trackAttestation()`.
+
+**Request body:**
+```json
+{
+  "burnTxHash": "0x...",
+  "bridgeId": "mybridge_a3f9c2",
+  "success": true
+}
+```
+
+**Response:** `{ "success": true, "status": "attested" }`
+
+---
+
+### `POST /track/mint`
+
+Completes the bridge and updates stats. Called by `sdk.trackMint()`.
+
+**Request body:**
+```json
+{
+  "burnTxHash": "0x...",
+  "mintTxHash": "0x...",
+  "bridgeId": "mybridge_a3f9c2",
+  "success": true
+}
+```
+
+**Response:** `{ "success": true, "status": "completed" }`
 
 ---
 
@@ -408,26 +360,6 @@ Returns paginated transaction list for a wallet.
 | `limit`  | No       | 20      | Number of results      |
 | `offset` | No       | 0       | Pagination offset      |
 
-**Response:**
-```json
-{
-  "transactions": [
-    {
-      "id": "uuid",
-      "wallet": "0x...",
-      "amount": "100.00",
-      "sourceChain": "sepolia",
-      "destinationChain": "base",
-      "burnTxHash": "0x...",
-      "mintTxHash": "0x...",
-      "status": "minted",
-      "timestamp": 1234567890,
-      "bridgeId": "mybridge_a3f9c2"
-    }
-  ]
-}
-```
-
 ---
 
 ### `GET /activity/:wallet`
@@ -436,58 +368,19 @@ Returns full activity for a wallet address.
 
 **Example:** `GET /activity/0xabc123...`
 
-**Response:**
-```json
-{
-  "wallet": "0xabc123...",
-  "transactions": [
-    {
-      "burnTxHash": "0x...",
-      "mintTxHash": "0x...",
-      "amount": "100.00",
-      "sourceChain": "sepolia",
-      "destinationChain": "base",
-      "status": "minted",
-      "timestamp": 1234567890
-    }
-  ]
-}
-```
-
 ---
 
 ### `GET /analytics/stats`
 
 Returns aggregate stats for your bridge.
 
-**Response:**
-```json
-{
-  "totalVolume": "52400.00",
-  "totalTransactions": 142,
-  "uniqueWallets": 89,
-  "completedBridges": 138,
-  "pendingBridges": 4
-}
-```
-
----
-
-### `POST /hooks/goldsky`
-
-Goldsky webhook endpoint. Called automatically by Goldsky when a
-`BridgeInitiated` event is indexed. Do not call this manually.
-
-Requires `goldsky-webhook-secret` header matching one of your
-`GOLDSKY_SECRET_*` environment variables.
+**Query params:** `bridgeId` (required)
 
 ---
 
 ### `GET /health`
 
-Health check.
-
-**Response:** `{ "status": "ok" }`
+Health check. Returns `{ "status": "ok" }`
 
 ---
 
@@ -495,23 +388,37 @@ Health check.
 
 ```
 src/
-  server.ts              — Express app and route registration
+  server.ts              — Express app, route registration, starts poller
   db/
     client.ts            — Neon database connection
     schema.ts            — Drizzle table definitions
   routes/
     trackBurn.ts         — POST /track/burn
+    trackAttestation.ts  — POST /track/attestation
+    trackMint.ts         — POST /track/mint
     transactions.ts      — GET /transactions
     activity.ts          — GET /activity/:wallet
     stats.ts             — GET /analytics/stats
-    goldskyHook.ts       — POST /hooks/goldsky
   services/
     txVerifier.ts        — On-chain transaction verification
+    statusPoller.ts      — Iris API backup poller (every 2 min)
   chains/
-    config.ts            — Chain addresses and CCTP domains
+    config.ts            — Chain names, IDs, and RPC URLs
 drizzle.config.ts
 .env.example
 ```
+
+---
+
+## Transaction Statuses
+
+| Status | Meaning | Activity Tab Action |
+|---|---|---|
+| `burned` | Burn confirmed, waiting for attestation | — (in progress) |
+| `attested` | Attestation complete, waiting for mint | — (in progress) |
+| `attestation_failed` | Attestation timed out / Circle down | **Submit Burn Hash** button |
+| `mint_failed` | Mint tx reverted | **Remint** button |
+| `completed` | Mint confirmed, bridge done | ✅ Done |
 
 ---
 

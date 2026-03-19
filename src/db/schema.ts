@@ -8,7 +8,6 @@ export const bridges = pgTable("bridges", {
     id: serial("id").primaryKey(),
     bridgeId: text("bridge_id").notNull().unique(),
     name: text("name").notNull(),
-    routerAddress: text("router_address"),
     createdAt: timestamp("created_at").defaultNow(),
 });
 
@@ -16,7 +15,6 @@ export const bridges = pgTable("bridges", {
 // transactions
 // One row per bridge attempt
 // burnTxHash is unique per burn
-// nonce links burn → mint
 // ----------------------------------------------------------------
 export const transactions = pgTable("transactions", {
     id: serial("id").primaryKey(),
@@ -27,14 +25,11 @@ export const transactions = pgTable("transactions", {
     destinationChain: text("destination_chain").notNull(),
     burnTxHash: text("burn_tx_hash").notNull().unique(),
     mintTxHash: text("mint_tx_hash"),
-    nonce: text("nonce"),
-    messageHash: text("message_hash"),
     status: text("status").notNull().default("burned"),
     timestamp: timestamp("timestamp").defaultNow(),
 }, (table) => ({
     walletIdx: index("wallet_idx").on(table.wallet),
     bridgeIdIdx: index("bridge_id_idx").on(table.bridgeId),
-    nonceIdx: index("nonce_idx").on(table.nonce),
 }));
 
 // ----------------------------------------------------------------
