@@ -1,6 +1,6 @@
 import { Router, Request, Response } from "express";
 import { db } from "../db/client";
-import { transactions, users } from "../db/schema";
+import { transactions, users, bridges } from "../db/schema";
 import { verifyBurnTx } from "../services/txVerifier";
 import { eq } from "drizzle-orm";
 
@@ -20,6 +20,19 @@ trackBurnRoute.post("/burn", async (req: Request, res: Response) => {
     // ── Validate required fields ──────────────────────────────────
     if (!burnTxHash || !wallet || !amount || !sourceChain || !destinationChain || !bridgeId) {
         return res.status(400).json({ error: "Missing required fields" });
+    }
+
+    // ── Verify bridge is registered ──────────────────────────────
+    const bridgeExists = await db
+        .select()
+        .from(bridges)
+        .where(eq(bridges.bridgeId, bridgeId))
+        .limit(1);
+
+    if (bridgeExists.length === 0) {
+        return res.status(403).json({ 
+            error: "Unauthorized Bridge ID. Please register this ID in the backend first." 
+        });
     }
 
     // ── Verify tx is real on-chain ────────────────────────────────

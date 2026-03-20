@@ -124,6 +124,14 @@ You should see:
 ✓ transactions table created
 ✓ users table created
 ✓ bridge_stats table created
+
+### 2.4 Register your Bridge ID
+Your backend only processes tracking for "Registered" IDs. Run this script once to whitelist yours:
+
+```bash
+node scripts/register-bridge.js --id "your_bridge_id" --name "Project Name"
+```
+
 ```
 
 ---
