@@ -7,7 +7,7 @@ export const trackMintRoute = Router();
 
 trackMintRoute.post("/mint", async (req: Request, res: Response) => {
 
-    const { burnTxHash, mintTxHash, bridgeId, success } = req.body;
+    const { burnTxHash, mintTxHash, bridgeId, success, amountReceived } = req.body;
 
     if (!burnTxHash || !bridgeId) {
         return res.status(400).json({ error: "Missing required fields (burnTxHash, bridgeId)" });
@@ -35,12 +35,20 @@ trackMintRoute.post("/mint", async (req: Request, res: Response) => {
         }
 
         const newStatus = success ? "completed" : "mint_failed";
+        
+        // Truncate amountReceived to 2 decimal places if present
+        let finalAmountReceived = amountReceived || null;
+        if (finalAmountReceived) {
+            const [int, frac] = String(finalAmountReceived).split('.');
+            finalAmountReceived = `${int}.${(frac || '').padEnd(2, '0').slice(0, 2)}`;
+        }
 
         await db
             .update(transactions)
             .set({
                 status: newStatus,
                 mintTxHash: mintTxHash || null,
+                amountReceived: finalAmountReceived,
             })
             .where(eq(transactions.burnTxHash, burnTxHash));
 

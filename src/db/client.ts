@@ -21,6 +21,12 @@ pool.connect((err, client, release) => {
         console.error("Database connection failed:", err.message);
     } else {
         console.log("Database connected successfully");
-        release();
+        
+        // --- Self-healing: Ensure amount_received column exists ---
+        client.query('ALTER TABLE transactions ADD COLUMN IF NOT EXISTS amount_received numeric;', (qErr) => {
+            if (qErr) console.warn("Could not auto-add amount_received:", qErr.message);
+            else console.log("✓ amount_received column check passed");
+            release();
+        });
     }
 });

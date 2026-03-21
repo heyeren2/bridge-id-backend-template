@@ -21,6 +21,7 @@ export const transactions = pgTable("transactions", {
     bridgeId: text("bridge_id").notNull(),
     wallet: text("wallet").notNull(),
     amount: numeric("amount").notNull(),
+    amountReceived: numeric("amount_received"),
     sourceChain: text("source_chain").notNull(),
     destinationChain: text("destination_chain").notNull(),
     burnTxHash: text("burn_tx_hash").notNull().unique(),
