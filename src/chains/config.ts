@@ -6,19 +6,19 @@ export interface ChainConfig {
 
 export const CHAINS: Record<string, ChainConfig> = {
 
-    sepolia: {
+    "ethereum sepolia": {
         chainId: 11155111,
         name: "Sepolia",
         rpcUrl: process.env.SEPOLIA_RPC_URL || "",
     },
 
-    base: {
+    "base sepolia": {
         chainId: 84532,
         name: "Base",
         rpcUrl: process.env.BASE_RPC_URL || "",
     },
 
-    arc: {
+    "arc testnet": {
         chainId: 5042002,
         name: "Arc",
         rpcUrl: process.env.ARC_RPC_URL || "",
