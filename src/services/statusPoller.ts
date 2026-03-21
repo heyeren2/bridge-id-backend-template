@@ -92,6 +92,7 @@ async function pollPendingTransactions(): Promise<void> {
                             set: {
                                 totalVolume: sql`${bridgeStats.totalVolume} + ${tx.amount}`,
                                 totalTransactions: sql`${bridgeStats.totalTransactions} + 1`,
+                                totalUsers: sql`${bridgeStats.totalUsers} + 1`,
                                 updatedAt: sql`now()`,
                             },
                         });

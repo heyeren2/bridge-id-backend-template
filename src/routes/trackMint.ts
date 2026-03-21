@@ -60,6 +60,7 @@ trackMintRoute.post("/mint", async (req: Request, res: Response) => {
                     set: {
                         totalVolume: sql`${bridgeStats.totalVolume} + ${tx.amount}`,
                         totalTransactions: sql`${bridgeStats.totalTransactions} + 1`,
+                        totalUsers: sql`${bridgeStats.totalUsers} + 1`,
                         updatedAt: sql`now()`,
                     },
                 });

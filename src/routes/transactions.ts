@@ -6,9 +6,10 @@ import { eq, desc } from "drizzle-orm";
 export const transactionsRoute = Router();
 
 // GET /transactions?wallet=0xabc&limit=20&offset=0
+// GET /transactions?wallet=all&burnTxHash=0x...
 transactionsRoute.get("/", async (req: Request, res: Response) => {
 
-    const { wallet, limit = "20", offset = "0" } = req.query;
+    const { wallet, burnTxHash, limit = "20", offset = "0" } = req.query;
 
     if (!wallet) {
         return res.status(400).json({ error: "wallet is required" });
@@ -16,10 +17,15 @@ transactionsRoute.get("/", async (req: Request, res: Response) => {
 
     try {
 
+        // If burnTxHash is provided, filter by that instead of wallet
+        const filter = burnTxHash
+            ? eq(transactions.burnTxHash, burnTxHash as string)
+            : eq(transactions.wallet, (wallet as string).toLowerCase());
+
         const txs = await db
             .select()
             .from(transactions)
-            .where(eq(transactions.wallet, (wallet as string).toLowerCase()))
+            .where(filter)
             .orderBy(desc(transactions.timestamp))
             .limit(parseInt(limit as string))
             .offset(parseInt(offset as string));
