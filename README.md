@@ -2,8 +2,12 @@
 
 Analytics and tracking backend for [bridge-id-sdk](https://www.npmjs.com/package/bridge-id-sdk).
 
-Tracks the full burn→attestation→mint lifecycle for any CCTP bridge using the SDK.
-Includes a 2-minute backup poller that checks Circle's Iris API for missed updates.
+## ✨ Key Features
+
+- **Real-time Txn Tracking** → Automated tracking from burn to mint across any CCTP-supported chain.
+- **Iris API Backup Poller** → Checks Circle's Iris API every 2 minutes to auto-update transactions that were missed by the frontend or timed out.
+- **Analytics Ready** → Aggregate volume and transaction stats per unique Bridge ID.
+- **Scalable Database** → Uses Drizzle ORM with Neon (Serverless Postgres) for lightning-fast, zero-maintenance storage.
 
 ---
 
@@ -38,8 +42,7 @@ User burns USDC
                                  Your frontend queries these
 ```
 
-**Backup:** A poller checks Circle's Iris API every 2 minutes for any stuck
-`"burned"` or `"attested"` transactions and auto-updates them if the mint is detected.
+**Backup Poller:** Checks Circle's API every 2 minutes for any stuck "burned" or "attested" transactions and updates them automatically.
 
 ---
 
@@ -64,7 +67,7 @@ Before starting, make sure you have accounts on:
 
 ---
 
-## Part 1 — Clone and Set Up Locally
+## Part 1: Clone and Set Up Locally
 
 ```bash
 git clone https://github.com/heyeren2/bridge-id-backend-template.git
@@ -77,20 +80,30 @@ Copy the example env file:
 cp .env.example .env
 ```
 
-Your `.env` file needs these values:
+### 2.2 Configure Environment Variables
+
+Create a `.env` file from the example and fill in your details:
 
 ```env
 PORT=3001
 DATABASE_URL=
 
+# RPC URLs (Required for on-chain verification)
 SEPOLIA_RPC_URL=
 BASE_RPC_URL=
 ARC_RPC_URL=
 ```
 
+| Variable | Description |
+|---|---|
+| `DATABASE_URL` | Neon/Postgres connection string. |
+| `ARC_RPC_URL` | RPC endpoint for the Ark Network. |
+| `SEPOLIA_RPC_URL` | RPC endpoint for Ethereum Sepolia. |
+| `BASE_RPC_URL` | RPC endpoint for Base Sepolia. |
+
 ---
 
-## Part 2 — Connect Neon Database
+## Part 2: Connect Neon Database
 
 ### 2.1 Create a Neon project
 
@@ -104,7 +117,7 @@ ARC_RPC_URL=
 
 1. On your Neon dashboard, click **Connection Details**
 2. Select **Node.js** from the dropdown
-3. Copy the connection string — it looks like:
+3. Copy the connection string, it looks like:
 ```
 postgresql://neondb_owner:password@ep-xxx.region.aws.neon.tech/neondb?sslmode=require
 ```
@@ -136,7 +149,7 @@ node scripts/register-bridge.js --id "your_bridge_id" --name "Project Name"
 
 ---
 
-## Part 3 — Deploy to Render
+## Part 3: Deploy to Render
 
 ### 3.1 Push your repo to GitHub
 
@@ -199,7 +212,7 @@ curl https://YOURBACKENDNAME.onrender.com/health
 
 ---
 
-## Part 4 — Integrate the SDK Into Your Bridge Frontend
+## Part 4: Integrate the SDK Into Your Bridge Frontend
 
 ### 4.1 Install the SDK
 
@@ -364,7 +377,7 @@ Returns paginated transaction list for a wallet.
 
 | Param    | Required | Default | Description            |
 |----------|----------|---------|------------------------|
-| `wallet` | Yes      | —       | Wallet address (0x...) |
+| `wallet` | Yes      | →       | Wallet address (0x...) |
 | `limit`  | No       | 20      | Number of results      |
 | `offset` | No       | 0       | Pagination offset      |
 
@@ -396,22 +409,22 @@ Health check. Returns `{ "status": "ok" }`
 
 ```
 src/
-  server.ts              — Express app, route registration, starts poller
+  server.ts              » Express app, route registration, starts poller
   db/
-    client.ts            — Neon database connection
-    schema.ts            — Drizzle table definitions
+    client.ts            » Neon database connection
+    schema.ts            » Drizzle table definitions
   routes/
-    trackBurn.ts         — POST /track/burn
-    trackAttestation.ts  — POST /track/attestation
-    trackMint.ts         — POST /track/mint
-    transactions.ts      — GET /transactions
-    activity.ts          — GET /activity/:wallet
-    stats.ts             — GET /analytics/stats
+    trackBurn.ts         » POST /track/burn
+    trackAttestation.ts  » POST /track/attestation
+    trackMint.ts         » POST /track/mint
+    transactions.ts      » GET /transactions
+    activity.ts          » GET /activity/:wallet
+    stats.ts             » GET /analytics/stats
   services/
-    txVerifier.ts        — On-chain transaction verification
-    statusPoller.ts      — Iris API backup poller (every 2 min)
+    txVerifier.ts        » On-chain transaction verification
+    statusPoller.ts      » Iris API backup poller (every 2 min)
   chains/
-    config.ts            — Chain names, IDs, and RPC URLs
+    config.ts            » Chain names, IDs, and RPC URLs
 drizzle.config.ts
 .env.example
 ```
@@ -422,8 +435,8 @@ drizzle.config.ts
 
 | Status | Meaning | Activity Tab Action |
 |---|---|---|
-| `burned` | Burn confirmed, waiting for attestation | — (in progress) |
-| `attested` | Attestation complete, waiting for mint | — (in progress) |
+| `burned` | Burn confirmed, waiting for attestation | » (in progress) |
+| `attested` | Attestation complete, waiting for mint | » (in progress) |
 | `attestation_failed` | Attestation timed out / Circle down | **Submit Burn Hash** button |
 | `mint_failed` | Mint tx reverted | **Remint** button |
 | `completed` | Mint confirmed, bridge done | ✅ Done |
