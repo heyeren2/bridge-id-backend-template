@@ -7,6 +7,19 @@ export interface VerificationResult {
 }
 
 // ----------------------------------------------------------------
+// Resolves a chain name to a CHAINS config entry.
+// Handles short names like "sepolia" matching "ethereum sepolia".
+// ----------------------------------------------------------------
+function resolveChain(chain: string) {
+    const lower = chain.toLowerCase();
+    // 1. Exact match
+    if (CHAINS[lower]) return CHAINS[lower];
+    // 2. Fuzzy match — find any key that contains the supplied name
+    const fuzzyKey = Object.keys(CHAINS).find(k => k.includes(lower) || lower.includes(k));
+    return fuzzyKey ? CHAINS[fuzzyKey] : null;
+}
+
+// ----------------------------------------------------------------
 // Verifies a burn tx is real before storing it
 // Checks: tx exists, succeeded, sender matches wallet
 // No contract address checks — bridge ID handles filtering
@@ -19,7 +32,7 @@ export async function verifyBurnTx(params: {
 
     const { txHash, wallet, chain } = params;
 
-    const chainConfig = CHAINS[chain.toLowerCase()];
+    const chainConfig = resolveChain(chain);
     if (!chainConfig) {
         return { valid: false, reason: `Unknown chain: ${chain}` };
     }

@@ -225,7 +225,7 @@ npm install bridge-id-sdk
 Run this once. This ID permanently links all your transactions in the backend.
 
 ```bash
-node scripts/generate-bridge-id.js --name "MyBridge" --address "0xYOUR_FEE_RECIPIENT_ADDRESS"
+npx bridgeidsdk --name "MyBridge" --address "0xYOUR_FEE_RECIPIENT_ADDRESS"
 ```
 
 Add the output to your frontend `.env`:
