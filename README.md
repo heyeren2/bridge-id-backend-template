@@ -5,7 +5,9 @@ Analytics and tracking backend for [bridge-id-sdk](https://www.npmjs.com/package
 ## ✨ Key Features
 
 - **Real-time Txn Tracking** → Automated tracking from burn to mint across any CCTP-supported chain.
-- **Iris API Backup Poller** → Checks Circle's Iris API every 2 minutes to auto-update transactions that were missed by the frontend or timed out.
+- **Reliable Cancel Recovery** → Direct `/track/status` endpoint lets the frontend reliably mark cancelled mints — bypassing the Circle SDK, which can fail silently.
+- **Iris API Backup Poller** → Checks Circle's Iris API every 2 minutes to auto-recover transactions stuck in any failed state (`mint_failed`, `attestation_failed`, `burned`, `attested`).
+- **Idempotency Guards** → Prevents double-counting bridge stats and protects `minted` transactions from being overwritten by late attestation events.
 - **Analytics Ready** → Aggregate volume and transaction stats per unique Bridge ID.
 - **Scalable Database** → Uses Drizzle ORM with Neon (Serverless Postgres) for lightning-fast, zero-maintenance storage.
 
@@ -20,29 +22,35 @@ Analytics and tracking backend for [bridge-id-sdk](https://www.npmjs.com/package
 ## What This Backend Does
 
 ```
-Your Bridge Frontend              This Backend
-──────────────────              ────────────────
+Your Bridge Frontend                    This Backend
+────────────────────                    ────────────────
 User burns USDC
         │
-        ├─ sdk.trackBurn()  ──►  POST /track/burn
-        │                        stores burn (status: "burned")
+        ├─ sdk.trackBurn()       ──►  POST /track/burn
+        │                              stores burn (status: "burned")
         │
         ├─ sdk.trackAttestation() ──►  POST /track/attestation
         │                              updates to "attested" or "attestation_failed"
+        │                              ⚡ Protected: won't overwrite "minted"
         │
-        └─ sdk.trackMint()  ──►  POST /track/mint
-                                 updates to "completed" or "mint_failed"
-                                         │
-                                         ▼
-                                 GET /activity/:wallet
-                                 GET /transactions
-                                 GET /analytics/stats
-                                         ▲
-                                         │
-                                 Your frontend queries these
+        ├─ sdk.trackMint()       ──►  POST /track/mint
+        │                              updates to "minted" or "mint_failed"
+        │                              ⚡ Idempotent: skips if already minted
+        │
+        └─ (on cancel/fail)      ──►  POST /track/status  ← NEW reliable fallback
+                                       force-sets "mint_failed" or "attestation_failed"
+                                       directly in DB, bypassing SDK entirely
+                                               │
+                                               ▼
+                                       GET /activity/all
+                                       GET /transactions
+                                       GET /analytics/stats
+                                               ▲
+                                               │
+                                       Your frontend queries these
 ```
 
-**Backup Poller:** Checks Circle's API every 2 minutes for any stuck "burned" or "attested" transactions and updates them automatically.
+**Backup Poller:** Runs every 2 minutes and checks Circle's Iris API for ALL stuck transactions (`burned`, `attested`, `mint_failed`, `attestation_failed`). If a mint is detected on-chain, the DB is updated to `minted` automatically.
 
 ---
 
@@ -279,15 +287,27 @@ await sdk.trackMint({
   mintTxHash: "0x...",
   success: true,
 })
+
+// When user CANCELS the mint in their wallet (reliable fallback — call in addition to SDK)
+// This directly sets the DB status so the Remint button appears in the Activity tab.
+await fetch(`${VITE_ANALYTICS_URL}/track/status`, {
+  method: "POST",
+  headers: { "Content-Type": "application/json" },
+  body: JSON.stringify({
+    burnTxHash: "0x...",
+    bridgeId: VITE_BRIDGE_ID,
+    status: "mint_failed",   // or "attestation_failed"
+  }),
+})
 ```
 
 ### 4.5 Show transaction status
 
 ```typescript
 const status = await sdk.getStatus(burnTxHash)
-// "burned" | "attested" | "attestation_failed" | "mint_failed" | "completed" | "not_found"
+// "burned" | "attested" | "attestation_failed" | "mint_failed" | "minted" | "not_found"
 
-if (status.status === "attested") {
+if (status.status === "attested" || status.status === "mint_failed") {
   // Show Remint button in your UI
   // Pass status.messageBytes + status.attestation
   // to receiveMessage() on the destination MessageTransmitter
@@ -303,6 +323,8 @@ activity.transactions.forEach(tx => {
   console.log(tx.sourceChain, "→", tx.destinationChain)
   console.log(tx.amount, "USDC")
   console.log(tx.status)
+  // Check mintTxHash as ground truth for success:
+  if (tx.mintTxHash) console.log("✅ Minted:", tx.mintTxHash)
 })
 ```
 
@@ -337,6 +359,7 @@ Records a burn transaction. Called by `sdk.trackBurn()`.
 ### `POST /track/attestation`
 
 Updates attestation status. Called by `sdk.trackAttestation()`.
+Protected: will not overwrite a `minted` or `completed` status.
 
 **Request body:**
 ```json
@@ -354,6 +377,7 @@ Updates attestation status. Called by `sdk.trackAttestation()`.
 ### `POST /track/mint`
 
 Completes the bridge and updates stats. Called by `sdk.trackMint()`.
+Idempotent: skips if the transaction is already `minted` to prevent double-counting.
 
 **Request body:**
 ```json
@@ -365,7 +389,29 @@ Completes the bridge and updates stats. Called by `sdk.trackMint()`.
 }
 ```
 
-**Response:** `{ "success": true, "status": "completed" }`
+**Response:** `{ "success": true, "status": "minted" }`
+
+---
+
+### `POST /track/status` _(Recovery Endpoint)_
+
+Directly sets a transaction status in the DB. Used as a reliable fallback when the user cancels a mint or attestation — bypasses the SDK entirely.
+
+Only allows setting recovery statuses (`mint_failed`, `attestation_failed`, `attested`).
+Never downgrades a `minted` or `completed` transaction.
+
+**Request body:**
+```json
+{
+  "burnTxHash": "0x...",
+  "bridgeId": "mybridge_a3f9c2",
+  "status": "mint_failed"
+}
+```
+
+**Response:** `{ "success": true, "status": "mint_failed" }`
+
+> **When to use:** Call this from your frontend whenever the user cancels a mint in their wallet. This ensures the Activity tab shows the **Remint** button immediately, even if the Circle SDK tracking call fails.
 
 ---
 
@@ -383,9 +429,15 @@ Returns paginated transaction list for a wallet.
 
 ---
 
+### `GET /activity/all`
+
+Returns all recent transactions across all wallets (for global activity feed).
+
+---
+
 ### `GET /activity/:wallet`
 
-Returns full activity for a wallet address.
+Returns full activity for a specific wallet address.
 
 **Example:** `GET /activity/0xabc123...`
 
@@ -415,14 +467,15 @@ src/
     schema.ts            » Drizzle table definitions
   routes/
     trackBurn.ts         » POST /track/burn
-    trackAttestation.ts  » POST /track/attestation
-    trackMint.ts         » POST /track/mint
+    trackAttestation.ts  » POST /track/attestation  (idempotency protected)
+    trackMint.ts         » POST /track/mint          (idempotent, uses "minted" status)
+    trackStatus.ts       » POST /track/status        (direct recovery endpoint)
     transactions.ts      » GET /transactions
-    activity.ts          » GET /activity/:wallet
+    activity.ts          » GET /activity/:wallet + /activity/all
     stats.ts             » GET /analytics/stats
   services/
     txVerifier.ts        » On-chain transaction verification
-    statusPoller.ts      » Iris API backup poller (every 2 min)
+    statusPoller.ts      » Iris API backup poller (every 2 min, covers all stuck states)
   chains/
     config.ts            » Chain names, IDs, and RPC URLs
 drizzle.config.ts
@@ -433,13 +486,15 @@ drizzle.config.ts
 
 ## Transaction Statuses
 
-| Status | Meaning | Activity Tab Action |
+| Status | Meaning | Activity Tab |
 |---|---|---|
-| `burned` | Burn confirmed, waiting for attestation | » (in progress) |
-| `attested` | Attestation complete, waiting for mint | » (in progress) |
-| `attestation_failed` | Attestation timed out / Circle down | **Submit Burn Hash** button |
-| `mint_failed` | Mint tx reverted | **Remint** button |
-| `completed` | Mint confirmed, bridge done | ✅ Done |
+| `burned` | Burn confirmed, waiting for attestation | ⏳ Processing |
+| `attested` | Attestation ready, waiting for mint | ⏳ Processing |
+| `attestation_failed` | Attestation timed out / Circle issue | ⚠️ Action Needed + Re-attest |
+| `mint_failed` | Mint cancelled or reverted | ⚠️ Action Needed + Remint |
+| `minted` | Mint confirmed, bridge complete | ✅ Success |
+
+> **Note:** The frontend treats `mintTxHash` as the ground truth for success — if a transaction has a `mintTxHash`, it displays as **Success** regardless of the `status` field. This protects against stale status values in the DB.
 
 ---
 

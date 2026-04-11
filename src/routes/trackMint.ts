@@ -34,8 +34,15 @@ trackMintRoute.post("/mint", async (req: Request, res: Response) => {
             return res.status(403).json({ error: "Bridge ID mismatch" });
         }
 
-        const newStatus = success ? "completed" : "mint_failed";
-        
+        // IDEMPOTENCY: Already minted — skip to prevent double-counting stats.
+        if (existing[0].status === "minted" || existing[0].mintTxHash) {
+            console.log(`[Mint] Skipping — tx ${burnTxHash} already minted`);
+            return res.json({ success: true, status: "minted", skipped: true });
+        }
+
+        // Use canonical "minted" status so the frontend can reliably detect success.
+        const newStatus = success ? "minted" : "mint_failed";
+
         // Truncate amountReceived to 2 decimal places if present
         let finalAmountReceived = amountReceived || null;
         if (finalAmountReceived) {

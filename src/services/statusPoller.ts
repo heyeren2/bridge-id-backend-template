@@ -20,18 +20,27 @@ interface IrisResponse {
 }
 
 // ----------------------------------------------------------------
-// Polls Circle's Iris API for unfinished burn transactions
-// Updates status to "completed" if mint is detected
-// This is a backup — the frontend normally sends updates directly
+// Polls Circle's Iris API for ALL unfinished transactions:
+// - burned: waiting for attestation
+// - attested: waiting for mint
+// - mint_failed: mint failed, check if it actually went through
+// - attestation_failed: check if Circle actually attested it
+// Updates DB when the Iris API shows a destination tx exists.
+// This acts as a safety net when the frontend SDK tracking fails.
 // ----------------------------------------------------------------
 
 async function pollPendingTransactions(): Promise<void> {
     try {
-        // Get all transactions that are still pending (burned or attested)
+        // Include ALL stuck states — not just burned/attested
         const pending = await db
             .select()
             .from(transactions)
-            .where(inArray(transactions.status, ["burned", "attested"]));
+            .where(inArray(transactions.status, [
+                "burned",
+                "attested",
+                "mint_failed",
+                "attestation_failed",
+            ]));
 
         if (pending.length === 0) return;
 
@@ -56,48 +65,65 @@ async function pollPendingTransactions(): Promise<void> {
 
                 const message = messages[0];
                 const irisStatus = message.status;
+                const destTxHash = message.destinationTransaction?.transactionHash;
 
-                // Check if attestation is complete
+                // ── Case 1: Mint already happened on-chain (Iris has destination tx) ──
+                // This catches mint_failed/attestation_failed that were actually minted
+                if (destTxHash) {
+                    // Skip if already marked as minted — avoid double-counting stats
+                    if (tx.status === "minted" || tx.mintTxHash === destTxHash) {
+                        continue;
+                    }
+
+                    await db
+                        .update(transactions)
+                        .set({
+                            status: "minted",
+                            mintTxHash: destTxHash,
+                        })
+                        .where(eq(transactions.burnTxHash, tx.burnTxHash));
+
+                    // Update bridge stats (only if not previously counted)
+                    if (tx.status !== "minted" && !tx.mintTxHash) {
+                        await db
+                            .insert(bridgeStats)
+                            .values({
+                                bridgeId: tx.bridgeId,
+                                totalVolume: tx.amount,
+                                totalTransactions: 1,
+                                totalUsers: 1,
+                            })
+                            .onConflictDoUpdate({
+                                target: bridgeStats.bridgeId,
+                                set: {
+                                    totalVolume: sql`${bridgeStats.totalVolume} + ${tx.amount}`,
+                                    totalTransactions: sql`${bridgeStats.totalTransactions} + 1`,
+                                    totalUsers: sql`${bridgeStats.totalUsers} + 1`,
+                                    updatedAt: sql`now()`,
+                                },
+                            });
+                    }
+
+                    console.log(`[Poller] ✅ ${tx.burnTxHash} → minted (dest: ${destTxHash})`);
+                    continue;
+                }
+
+                // ── Case 2: Attestation is ready but we haven't minted yet ──
                 if (irisStatus === "complete" && tx.status === "burned") {
                     await db
                         .update(transactions)
                         .set({ status: "attested" })
                         .where(eq(transactions.burnTxHash, tx.burnTxHash));
-                    console.log(`[Poller] ${tx.burnTxHash} → attested`);
+                    console.log(`[Poller] 🔄 ${tx.burnTxHash} → attested`);
                 }
 
-                // Check if mint tx exists (destination tx hash)
-                const destTxHash = message.destinationTransaction?.transactionHash;
-
-                if (destTxHash) {
+                // ── Case 3: Iris shows attestation failed ──
+                if (irisStatus === "failed" && tx.status !== "attestation_failed") {
                     await db
                         .update(transactions)
-                        .set({
-                            status: "completed",
-                            mintTxHash: destTxHash,
-                        })
+                        .set({ status: "attestation_failed" })
                         .where(eq(transactions.burnTxHash, tx.burnTxHash));
-
-                    // Update bridge stats
-                    await db
-                        .insert(bridgeStats)
-                        .values({
-                            bridgeId: tx.bridgeId,
-                            totalVolume: tx.amount,
-                            totalTransactions: 1,
-                            totalUsers: 1,
-                        })
-                        .onConflictDoUpdate({
-                            target: bridgeStats.bridgeId,
-                            set: {
-                                totalVolume: sql`${bridgeStats.totalVolume} + ${tx.amount}`,
-                                totalTransactions: sql`${bridgeStats.totalTransactions} + 1`,
-                                totalUsers: sql`${bridgeStats.totalUsers} + 1`,
-                                updatedAt: sql`now()`,
-                            },
-                        });
-
-                    console.log(`[Poller] ${tx.burnTxHash} → completed (mint: ${destTxHash})`);
+                    console.log(`[Poller] ❌ ${tx.burnTxHash} → attestation_failed`);
                 }
 
             } catch (err: any) {

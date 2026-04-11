@@ -4,6 +4,7 @@ import dotenv from "dotenv";
 import { trackBurnRoute } from "./routes/trackBurn";
 import { trackAttestationRoute } from "./routes/trackAttestation";
 import { trackMintRoute } from "./routes/trackMint";
+import { trackStatusRoute } from "./routes/trackStatus";
 import { transactionsRoute } from "./routes/transactions";
 import { statsRoute } from "./routes/stats";
 import { activityRoute } from "./routes/activity";
@@ -21,6 +22,7 @@ app.use(express.json());
 app.use("/track", trackBurnRoute);
 app.use("/track", trackAttestationRoute);
 app.use("/track", trackMintRoute);
+app.use("/track", trackStatusRoute);   // Direct status override (fallback for SDK failures)
 app.use("/transactions", transactionsRoute);
 app.use("/analytics", statsRoute);
 app.use("/activity", activityRoute);

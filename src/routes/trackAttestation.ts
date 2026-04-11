@@ -30,6 +30,14 @@ trackAttestationRoute.post("/attestation", async (req: Request, res: Response) =
             return res.status(403).json({ error: "Bridge ID mismatch" });
         }
 
+        // IDEMPOTENCY: Never downgrade an already completed/minted transaction.
+        // A late attestation event must not overwrite a successful mint.
+        const protectedStatuses = new Set(["minted", "completed"]);
+        if (protectedStatuses.has(existing[0].status)) {
+            console.log(`[Attestation] Skipping — tx ${burnTxHash} already ${existing[0].status}`);
+            return res.json({ success: true, status: existing[0].status, skipped: true });
+        }
+
         const newStatus = success ? "attested" : "attestation_failed";
 
         await db
